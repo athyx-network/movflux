@@ -155,6 +155,49 @@
       padding: 0 12px;
     }
 
+    .player-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .player-selector {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      max-width: 100%;
+      padding: 5px;
+      border: 1px solid var(--line);
+      border-radius: var(--squircle-sm);
+      background: rgba(16, 20, 28, .78);
+    }
+
+    .player-option {
+      height: 30px;
+      border: 0;
+      border-radius: 11px;
+      background: transparent;
+      color: var(--text);
+      padding: 0 10px;
+      font-size: .84rem;
+      font-weight: 820;
+      white-space: nowrap;
+      transition: background .15s ease, color .15s ease;
+    }
+
+    .player-option:hover,
+    .player-option:focus-visible {
+      background: rgba(168, 85, 247, .18);
+      outline: none;
+    }
+
+    .player-option.active {
+      background: rgba(168, 85, 247, .88);
+      color: #fff;
+    }
+
     .primary-btn:hover,
     .icon-btn:hover {
       background: rgba(168, 85, 247, .28);
@@ -296,6 +339,21 @@
         flex-direction: column;
       }
 
+      .player-actions {
+        justify-content: stretch;
+      }
+
+      .player-selector,
+      .icon-btn {
+        width: 100%;
+      }
+
+      .player-option {
+        flex: 1;
+        min-width: 0;
+        padding: 0 8px;
+      }
+
       .search-row {
         grid-template-columns: 1fr;
       }
@@ -329,16 +387,19 @@
       <div class="player-shell">
         <div class="player-head">
           <div>
-          <h2 class="player-title" id="playerTitle">Moviex Player</h2>
-          <p class="player-meta" id="playerMeta"></p>
-        </div>
-          <button class="icon-btn" id="backHome" type="button" aria-label="Home">
-            <i class="fa-solid fa-house" aria-hidden="true"></i>
-            <span>Home</span>
-          </button>
+            <h2 class="player-title" id="playerTitle">Moviex Player</h2>
+            <p class="player-meta" id="playerMeta"></p>
+          </div>
+          <div class="player-actions">
+            <div class="player-selector" id="playerSelector" aria-label="Choose player"></div>
+            <button class="icon-btn" id="backHome" type="button" aria-label="Home">
+              <i class="fa-solid fa-house" aria-hidden="true"></i>
+              <span>Home</span>
+            </button>
+          </div>
         </div>
         <div class="frame-wrap">
-          <iframe id="player" title="VidSrc player" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen></iframe>
+          <iframe id="player" title="Moviex player" referrerpolicy="origin" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen></iframe>
         </div>
       </div>
     </section>
@@ -367,6 +428,47 @@
   <script>
     const API_URL = "https://tmdb-search.athyx-network.workers.dev/?q=";
     const PLAYER_PARAMS = "colour=a855f7&autoplay=true&autonextepisode=true&pausescreen=true";
+    const DEFAULT_PLAYER = "vidsrc-su";
+    const PLAYERS = [
+      {
+        id: "vidsrc-su",
+        label: "VidSrc.su",
+        url: ({ mediaType, tmdbId, season, episode }) => {
+          if (mediaType === "tv") {
+            return `https://vidsrc.su/tv/${encodeURIComponent(tmdbId)}/${encodeURIComponent(season)}/${encodeURIComponent(episode)}?${PLAYER_PARAMS}`;
+          }
+
+          return `https://vidsrc.su/movie/${encodeURIComponent(tmdbId)}?${PLAYER_PARAMS}`;
+        }
+      },
+      {
+        id: "vidsrcme",
+        label: "VidSrcMe",
+        url: ({ mediaType, tmdbId, season, episode }) => {
+          const params = new URLSearchParams({ tmdb: tmdbId });
+
+          if (mediaType === "tv") {
+            params.set("season", season);
+            params.set("episode", episode);
+            return `https://vidsrcme.ru/embed/tv?${params.toString()}`;
+          }
+
+          return `https://vidsrcme.ru/embed/movie?${params.toString()}`;
+        }
+      },
+      {
+        id: "vidsrc-to",
+        label: "VidSrc.to",
+        url: ({ mediaType, tmdbId, imdbId, season, episode }) => {
+          if (mediaType === "tv") {
+            const showId = imdbId || tmdbId;
+            return `https://vidsrc.to/embed/tv/${encodeURIComponent(showId)}/${encodeURIComponent(season)}/${encodeURIComponent(episode)}`;
+          }
+
+          return `https://vidsrc.to/embed/movie/${encodeURIComponent(tmdbId)}`;
+        }
+      }
+    ];
 
     const recommendedMovies = [
       {
@@ -507,8 +609,11 @@
     const player = document.getElementById("player");
     const playerTitle = document.getElementById("playerTitle");
     const playerMeta = document.getElementById("playerMeta");
+    const playerSelector = document.getElementById("playerSelector");
     const homeLogo = document.getElementById("homeLogo");
     const backHome = document.getElementById("backHome");
+    let currentPlayback = null;
+    let activePlayerId = DEFAULT_PLAYER;
 
     function normalize(value) {
       return String(value || "")
@@ -563,8 +668,49 @@
       return score;
     }
 
-    function playerUrlForId(tmdbId) {
-      return `https://vidsrc.su/movie/${encodeURIComponent(tmdbId)}?${PLAYER_PARAMS}`;
+    function getPlayer(playerId) {
+      return PLAYERS.find((playerOption) => playerOption.id === playerId) || PLAYERS[0];
+    }
+
+    function renderPlayerSelector() {
+      playerSelector.innerHTML = "";
+
+      PLAYERS.forEach((playerOption) => {
+        const button = document.createElement("button");
+        button.className = "player-option";
+        button.type = "button";
+        button.textContent = playerOption.label;
+        button.dataset.playerId = playerOption.id;
+        button.addEventListener("click", () => switchPlayer(playerOption.id));
+        playerSelector.appendChild(button);
+      });
+    }
+
+    function updatePlayerSelector() {
+      const buttons = playerSelector.querySelectorAll(".player-option");
+
+      buttons.forEach((button) => {
+        const isActive = button.dataset.playerId === activePlayerId;
+        button.classList.toggle("active", isActive);
+        button.setAttribute("aria-pressed", String(isActive));
+      });
+    }
+
+    function playerUrlForPlayback(playback, playerId = activePlayerId) {
+      return getPlayer(playerId).url(playback);
+    }
+
+    function switchPlayer(playerId) {
+      activePlayerId = getPlayer(playerId).id;
+      updatePlayerSelector();
+
+      const url = new URL(window.location.href);
+      url.searchParams.set("p", activePlayerId);
+      history.replaceState({ ...(history.state || {}), playerId: activePlayerId }, "", url);
+
+      if (currentPlayback) {
+        player.src = playerUrlForPlayback(currentPlayback);
+      }
     }
 
     function renderCards(items) {
@@ -618,27 +764,63 @@
 
     function showHome() {
       player.src = "";
+      currentPlayback = null;
       playerView.classList.remove("show");
       homeView.classList.remove("hidden");
     }
 
-    function showPlayer(tmdbId, title = "") {
+    function showPlayer(tmdbId, title = "", options = {}) {
+      const mediaType = options.mediaType === "tv" ? "tv" : "movie";
+      const season = String(options.season || "1");
+      const episode = String(options.episode || "1");
+      const imdbId = options.imdbId || "";
+      const chosenPlayer = getPlayer(options.playerId || activePlayerId);
+
+      activePlayerId = chosenPlayer.id;
+      currentPlayback = {
+        tmdbId: String(tmdbId),
+        title,
+        mediaType,
+        season,
+        episode,
+        imdbId
+      };
+
       homeView.classList.add("hidden");
       playerView.classList.add("show");
       playerTitle.textContent = title || "Moviex Player";
-      playerMeta.textContent = `TMDB ${tmdbId}`;
-      player.src = playerUrlForId(tmdbId);
+      playerMeta.textContent = mediaType === "tv"
+        ? `TMDB ${tmdbId} - S${season} E${episode}`
+        : `TMDB ${tmdbId}`;
+      updatePlayerSelector();
+      player.src = playerUrlForPlayback(currentPlayback);
     }
 
-    function openPlayer(tmdbId, title = "") {
+    function openPlayer(tmdbId, title = "", options = {}) {
+      const mediaType = options.mediaType === "tv" ? "tv" : "movie";
       const url = new URL(window.location.href);
       url.searchParams.set("w", tmdbId);
+      url.searchParams.set("type", mediaType);
+      url.searchParams.set("p", activePlayerId);
       url.searchParams.delete("s");
+      url.searchParams.delete("imdb");
+      url.searchParams.delete("season");
+      url.searchParams.delete("episode");
+
+      if (mediaType === "tv") {
+        url.searchParams.set("season", options.season || "1");
+        url.searchParams.set("episode", options.episode || "1");
+
+        if (options.imdbId) {
+          url.searchParams.set("imdb", options.imdbId);
+        }
+      }
+
       if (title) {
         url.searchParams.set("title", title);
       }
-      history.pushState({ tmdbId, title }, "", url);
-      showPlayer(tmdbId, title);
+      history.pushState({ tmdbId, title, mediaType, playerId: activePlayerId }, "", url);
+      showPlayer(tmdbId, title, { ...options, mediaType, playerId: activePlayerId });
     }
 
     async function searchMovies(query) {
@@ -685,9 +867,17 @@
       const params = new URLSearchParams(window.location.search);
       const tmdbId = params.get("w");
       const searchTerm = params.get("s");
+      const playerId = params.get("p") || DEFAULT_PLAYER;
+      const mediaType = params.get("type") === "tv" ? "tv" : "movie";
 
       if (tmdbId) {
-        showPlayer(tmdbId, params.get("title") || "");
+        showPlayer(tmdbId, params.get("title") || "", {
+          mediaType,
+          season: params.get("season") || "1",
+          episode: params.get("episode") || "1",
+          imdbId: params.get("imdb") || "",
+          playerId
+        });
         return;
       }
 
@@ -708,6 +898,11 @@
       const url = new URL(window.location.href);
       url.searchParams.delete("w");
       url.searchParams.delete("title");
+      url.searchParams.delete("type");
+      url.searchParams.delete("season");
+      url.searchParams.delete("episode");
+      url.searchParams.delete("imdb");
+      url.searchParams.delete("p");
 
       if (cleanQuery) {
         url.searchParams.set("s", cleanQuery);
@@ -723,6 +918,11 @@
       const url = new URL(window.location.href);
       url.searchParams.delete("w");
       url.searchParams.delete("title");
+      url.searchParams.delete("type");
+      url.searchParams.delete("season");
+      url.searchParams.delete("episode");
+      url.searchParams.delete("imdb");
+      url.searchParams.delete("p");
       url.searchParams.delete("s");
       url.searchParams.delete("q");
       history.pushState({}, "", url);
@@ -733,6 +933,7 @@
     backHome.addEventListener("click", clearPlayerRoute);
     window.addEventListener("popstate", routeFromUrl);
 
+    renderPlayerSelector();
     renderCards(recommendedMovies);
     routeFromUrl();
   </script>
